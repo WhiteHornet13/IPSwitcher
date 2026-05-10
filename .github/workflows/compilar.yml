@@ -75,7 +75,7 @@ jobs:
           python -m PyInstaller \
             --onefile \
             --name "${{ env.APP_NAME }}" \
-            --add-data "ips.json:." \
+            --add-data "$GITHUB_WORKSPACE/ips.json:." \
             --distpath dist/linux \
             --workpath build/pyinstaller \
             --specpath build \
@@ -185,7 +185,7 @@ jobs:
             --onefile `
             --windowed `
             --name "${{ env.APP_NAME }}" `
-            --add-data "ips.json;." `
+            --add-data "$env:GITHUB_WORKSPACE\ips.json;." `
             --distpath dist\windows `
             --workpath build\pyinstaller_win `
             --specpath build `
