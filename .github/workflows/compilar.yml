@@ -101,46 +101,46 @@ jobs:
           cp ips.json "${PKG_DIR}/usr/share/${PKG_NAME}/ips.json"
           chmod 644 "${PKG_DIR}/usr/share/${PKG_NAME}/ips.json"
 
-          cat > "${PKG_DIR}/usr/share/applications/${PKG_NAME}.desktop" << 'DESKTOP'
-[Desktop Entry]
-Name=IPSwitcher
-Comment=Herramienta para cambiar la IPv4 de adaptadores de red
-Exec=pkexec /usr/bin/ipswitcher
-Icon=network-wired
-Terminal=false
-Type=Application
-Categories=Network;Settings;
-Keywords=IP;Network;Switch;IPv4;
-DESKTOP
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Name=IPSwitcher' \
+            'Comment=Herramienta para cambiar la IPv4 de adaptadores de red' \
+            'Exec=pkexec /usr/bin/ipswitcher' \
+            'Icon=network-wired' \
+            'Terminal=false' \
+            'Type=Application' \
+            'Categories=Network;Settings;' \
+            'Keywords=IP;Network;Switch;IPv4;' \
+            > "${PKG_DIR}/usr/share/applications/${PKG_NAME}.desktop"
           chmod 644 "${PKG_DIR}/usr/share/applications/${PKG_NAME}.desktop"
 
-          cat > "${PKG_DIR}/DEBIAN/postinst" << 'POSTINST'
-#!/bin/sh
-set -e
-if command -v update-desktop-database > /dev/null 2>&1; then
-    update-desktop-database -q /usr/share/applications || true
-fi
-POSTINST
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'set -e' \
+            'if command -v update-desktop-database > /dev/null 2>&1; then' \
+            '    update-desktop-database -q /usr/share/applications || true' \
+            'fi' \
+            > "${PKG_DIR}/DEBIAN/postinst"
           chmod 755 "${PKG_DIR}/DEBIAN/postinst"
 
           echo "Upstream-Name: IPSwitcher" > "${PKG_DIR}/usr/share/doc/${PKG_NAME}/copyright"
           gzip --best -n -c /dev/null > "${PKG_DIR}/usr/share/doc/${PKG_NAME}/changelog.gz"
 
           INSTALLED_SIZE=$(du -sk "${PKG_DIR}/usr" | cut -f1)
-          cat > "${PKG_DIR}/DEBIAN/control" << CONTROL
-Package: ${PKG_NAME}
-Version: ${APP_VERSION}
-Architecture: ${ARCH}
-Maintainer: IPSwitcher Project <ipswitcher@example.com>
-Installed-Size: ${INSTALLED_SIZE}
-Depends: libgtk-3-0
-Section: net
-Priority: optional
-Homepage: https://github.com/WhiteHornet13/IPSwitcher
-Description: Herramienta para cambiar la IPv4 de adaptadores de red
- IPSwitcher permite seleccionar un adaptador de red y aplicar
- configuraciones IP fijas almacenadas en un archivo JSON.
-CONTROL
+          printf '%s\n' \
+            "Package: ${PKG_NAME}" \
+            "Version: ${APP_VERSION}" \
+            "Architecture: ${ARCH}" \
+            "Maintainer: IPSwitcher Project <ipswitcher@example.com>" \
+            "Installed-Size: ${INSTALLED_SIZE}" \
+            "Depends: libgtk-3-0" \
+            "Section: net" \
+            "Priority: optional" \
+            "Homepage: https://github.com/WhiteHornet13/IPSwitcher" \
+            "Description: Herramienta para cambiar la IPv4 de adaptadores de red" \
+            " IPSwitcher permite seleccionar un adaptador de red y aplicar" \
+            " configuraciones IP fijas almacenadas en un archivo JSON." \
+            > "${PKG_DIR}/DEBIAN/control"
 
           dpkg-deb --build --root-owner-group \
             "${PKG_DIR}" "dist/linux/${PKG_NAME}_${APP_VERSION}_${ARCH}.deb"
