@@ -1,0 +1,103 @@
+{
+  "IPs": {
+    "lineas": [
+      {
+        "nombre": "Linea 1",
+        "maquinas": [
+          {
+            "nombre": "Maquina 1",
+            "equipos": [
+              {
+                "nombre": "Equipo 1",
+                "IP-PC": "192.168.1.10",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.1.254"
+              },
+              {
+                "nombre": "Equipo 2",
+                "IP-PC": "192.168.1.11",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.1.254"
+              }
+            ]
+          },
+          {
+            "nombre": "Maquina 2",
+            "equipos": [
+              {
+                "nombre": "Equipo 1",
+                "IP-PC": "192.168.1.20",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.1.254"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "nombre": "Linea 2",
+        "maquinas": [
+          {
+            "nombre": "Maquina 1",
+            "equipos": [
+              {
+                "nombre": "Equipo 1",
+                "IP-PC": "192.168.2.10",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.2.254"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "nombre": "Linea 3",
+        "maquinas": [
+          {
+            "nombre": "Maquina 1",
+            "equipos": [
+              {
+                "nombre": "Equipo 1",
+                "IP-PC": "192.168.3.10",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.3.254"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "nombre": "Linea 4",
+        "maquinas": [
+          {
+            "nombre": "Maquina 1",
+            "equipos": [
+              {
+                "nombre": "Equipo 1",
+                "IP-PC": "192.168.4.10",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.4.254"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "nombre": "Linea 5",
+        "maquinas": [
+          {
+            "nombre": "Maquina 1",
+            "equipos": [
+              {
+                "nombre": "Equipo 1",
+                "IP-PC": "192.168.5.10",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "192.168.5.254"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
