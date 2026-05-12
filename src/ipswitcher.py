@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.0.0
+Versión   : 1.1.0
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -54,7 +54,7 @@ PROFILES_FILE = _BASE_DIR / "ips.json"
 # ---------------------------------------------------------------------------
 STRINGS = {
     "es": {
-        "title"            : "IPSwitcher - Cambio de IP",
+        "title"            : "IP Switcher - Cambio de IP",
         "select_adapter"   : "Adaptador de red:",
         "select_profile"   : "Perfil de IP:",
         "btn_apply"        : "Aplicar",
@@ -72,13 +72,15 @@ STRINGS = {
         "new_ip"           : "Nueva IP",
         "mask"             : "Máscara",
         "gateway"          : "Puerta de enlace",
+        "destino"          : "IP Destino",
         "log_applying"     : "Aplicando perfil '{}' en adaptador '{}'...",
         "log_success"      : "Configuración aplicada correctamente.",
         "confirm_title"    : "Confirmar cambio",
+        "error_ip_in_use"  : "La IP {} ya está asignada al adaptador '{}'.",
         "confirm_msg"      : "¿Aplicar IP {} al adaptador {}?",
     },
     "en": {
-        "title"            : "IPSwitcher - IP Changer",
+        "title"            : "IP Switcher - IP Changer",
         "select_adapter"   : "Network adapter:",
         "select_profile"   : "IP profile:",
         "btn_apply"        : "Apply",
@@ -96,9 +98,11 @@ STRINGS = {
         "new_ip"           : "New IP",
         "mask"             : "Subnet mask",
         "gateway"          : "Gateway",
+        "destino"          : "Target IP",
         "log_applying"     : "Applying profile '{}' on adapter '{}'...",
         "log_success"      : "Configuration applied successfully.",
         "confirm_title"    : "Confirm change",
+        "error_ip_in_use"  : "IP {} is already assigned to adapter '{}'.",
         "confirm_msg"      : "Apply IP {} to adapter {}?",
     },
 }
@@ -207,14 +211,31 @@ def load_profiles(path: Path = PROFILES_FILE) -> dict:
     SystemExit si el archivo no existe o tiene formato incorrecto.
     """
     if not path.exists():
-        logger.error(t("error_load", str(path)))
+        msg = t("error_load", str(path))
+        logger.error(msg)
+        # Mostrar diálogo aunque no haya ventana principal aún
+        try:
+            _root = tk.Tk()
+            _root.withdraw()
+            messagebox.showerror(APP_NAME, msg)
+            _root.destroy()
+        except Exception:
+            pass
         sys.exit(1)
 
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (json.JSONDecodeError, IOError) as exc:
-        logger.error(t("error_load", exc))
+        msg = t("error_load", exc)
+        logger.error(msg)
+        try:
+            _root = tk.Tk()
+            _root.withdraw()
+            messagebox.showerror(APP_NAME, msg)
+            _root.destroy()
+        except Exception:
+            pass
         sys.exit(1)
 
     return data
@@ -233,7 +254,7 @@ def get_flat_profiles(data: dict) -> dict[str, dict]:
 
     Returns
     -------
-    dict { "Linea X / Maquina Y / Equipo Z": { ip, mask, gateway } }
+    dict { "Linea X / Maquina Y / Equipo Z": { ip, mask, destino } }
     """
     flat: dict[str, dict] = {}
     for linea in data.get("IPs", {}).get("lineas", []):
@@ -247,7 +268,8 @@ def get_flat_profiles(data: dict) -> dict[str, dict]:
                 flat[key] = {
                     "ip"     : equipo.get("IP-PC", ""),
                     "mask"   : equipo.get("Mascara", ""),
-                    "gateway": equipo.get("IP-Destino", ""),
+                    "destino": equipo.get("IP-Destino", ""), #solo informativo no se usa de momento
+                    "gateway":""  #siempre en blanco
                 }
     return flat
 
@@ -321,7 +343,7 @@ def apply_profile(adapter: str, profile: dict) -> None:
     """
     ip      = profile["ip"]
     mask    = profile["mask"]
-    gateway = profile["gateway"]
+    gateway = profile.get("gateway", "").strip()
     os_name = platform.system()
 
     logger.info(t("log_applying", "{}/{}/{}".format(ip, mask, gateway), adapter))
@@ -368,6 +390,38 @@ def _run(cmd: list[str]) -> None:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip())
 
+def _find_adapter_with_ip(ip: str) -> str | None:
+    """
+    Busca en qué adaptador del sistema está asignada una dirección IP.
+
+    Recorre /sys/class/net y lee la dirección de cada interfaz mediante
+    'ip addr show'. Solo funciona en Linux.
+
+    Parameters
+    ----------
+    ip : Dirección IPv4 a buscar (sin máscara)
+
+    Returns
+    -------
+    Nombre del adaptador que ya tiene esa IP, o None si no se encuentra.
+    """
+    try:
+        result = subprocess.run(
+            ["ip", "-o", "-4", "addr", "show"],
+            capture_output=True, text=True,
+        )
+        for line in result.stdout.splitlines():
+            # Formato: "2: eth0    inet 192.168.1.10/24 ..."
+            parts = line.split()
+            if len(parts) >= 4:
+                addr = parts[3].split("/")[0]   # quitar el prefijo CIDR
+                if addr == ip:
+                    return parts[1]             # nombre del adaptador
+    except Exception:
+        pass
+    return None
+
+
 
 def _apply_linux(adapter: str, ip: str, mask: str, gateway: str) -> None:
     """
@@ -387,6 +441,11 @@ def _apply_linux(adapter: str, ip: str, mask: str, gateway: str) -> None:
     """
     cidr = _mask_to_cidr(mask)
 
+    # Comprueba si la IP ya está en uso en OTRO adaptador
+    existing = _find_adapter_with_ip(ip)
+    if existing and existing != adapter:
+        raise RuntimeError(t("error_ip_in_use", ip, existing))
+
     # Elimina IPs existentes para evitar conflictos
     _run(["ip", "addr", "flush", "dev", adapter])
 
@@ -396,13 +455,14 @@ def _apply_linux(adapter: str, ip: str, mask: str, gateway: str) -> None:
     # Levanta el interfaz por si estuviera caído
     _run(["ip", "link", "set", adapter, "up"])
 
-    # Establece la ruta predeterminada
+    # Establece la ruta predeterminada solo si se ha especificado gateway
     # Primero borra rutas default existentes para evitar duplicados
-    subprocess.run(
-        ["ip", "route", "del", "default", "dev", adapter],
-        capture_output=True,
-    )
-    _run(["ip", "route", "add", "default", "via", gateway, "dev", adapter])
+    if gateway:
+        subprocess.run(
+            ["ip", "route", "del", "default", "dev", adapter],
+            capture_output=True,
+        )
+        _run(["ip", "route", "add", "default", "via", gateway, "dev", adapter])
 
 
 def _apply_windows(adapter: str, ip: str, mask: str, gateway: str) -> None:
@@ -416,15 +476,16 @@ def _apply_windows(adapter: str, ip: str, mask: str, gateway: str) -> None:
     mask    : Máscara de subred
     gateway : Puerta de enlace predeterminada
     """
-    _run([
+    cmd = [
         "netsh", "interface", "ip", "set", "address",
         "name={}".format(adapter),
         "source=static",
         "address={}".format(ip),
         "mask={}".format(mask),
-        "gateway={}".format(gateway),
-        "gwmetric=1",
-    ])
+    ]
+    if gateway:
+        cmd += ["gateway={}".format(gateway), "gwmetric=1"]
+    _run(cmd)
 
 
 # ---------------------------------------------------------------------------
@@ -590,25 +651,25 @@ class IPSwitcherGUI:
             "App.TLabel",
             background=c["bg"],
             foreground=c["text"],
-            font=("Consolas", 10),
+            font=("DejaVu Sans Mono", 10),
         )
         style.configure(
             "Title.TLabel",
             background=c["bg"],
             foreground=c["accent"],
-            font=("Consolas", 16, "bold"),
+            font=("DejaVu Sans Mono", 16, "bold"),
         )
         style.configure(
             "Dim.TLabel",
             background=c["panel"],
             foreground=c["text_dim"],
-            font=("Consolas", 9),
+            font=("DejaVu Sans Mono", 9),
         )
         style.configure(
             "Info.TLabel",
             background=c["panel"],
             foreground=c["accent"],
-            font=("Consolas", 10, "bold"),
+            font=("DejaVu Sans Mono", 10, "bold"),
         )
 
         # ComboBox — colores del campo y del texto seleccionado
@@ -620,7 +681,7 @@ class IPSwitcherGUI:
             selectbackground=c["accent2"],
             selectforeground=c["text"],
             insertcolor=c["text"],
-            font=("Consolas", 10),
+            font=("DejaVu Sans Mono", 10),
         )
         style.map(
             "App.TCombobox",
@@ -638,14 +699,14 @@ class IPSwitcherGUI:
         self.root.option_add("*TCombobox*Listbox.foreground",      c["text"])
         self.root.option_add("*TCombobox*Listbox.selectBackground", c["accent2"])
         self.root.option_add("*TCombobox*Listbox.selectForeground", c["text"])
-        self.root.option_add("*TCombobox*Listbox.font",            "Consolas 10")
+        self.root.option_add("*TCombobox*Listbox.font",            "DejaVu Sans Mono 10")
 
         # Botón principal
         style.configure(
             "Apply.TButton",
             background=c["accent"],
             foreground=c["bg"],
-            font=("Consolas", 11, "bold"),
+            font=("DejaVu Sans Mono", 11, "bold"),
             padding=(20, 8),
             relief="flat",
         )
@@ -687,7 +748,7 @@ class IPSwitcherGUI:
             text=priv_txt,
             bg=c["bg"],
             fg=priv_clr,
-            font=("Consolas", 8),
+            font=("DejaVu Sans Mono", 8),
         ).pack(side="right")
 
         # Separador
@@ -706,7 +767,7 @@ class IPSwitcherGUI:
         tk.Label(
             row1, text=t("select_adapter"),
             bg=c["panel"], fg=c["text_dim"],
-            font=("Consolas", 9),
+            font=("DejaVu Sans Mono", 9),
         ).pack(side="left")
 
         self.adapter_var = tk.StringVar()
@@ -727,7 +788,7 @@ class IPSwitcherGUI:
             fg=c["bg"],
             activebackground=c["accent2"],
             activeforeground=c["text"],
-            font=("Consolas", 9, "bold"),
+            font=("DejaVu Sans Mono", 9, "bold"),
             relief="flat",
             bd=0,
             padx=10,
@@ -743,7 +804,7 @@ class IPSwitcherGUI:
         tk.Label(
             row2, text=t("select_profile"),
             bg=c["panel"], fg=c["text_dim"],
-            font=("Consolas", 9),
+            font=("DejaVu Sans Mono", 9),
         ).pack(side="left")
 
         self.profile_var = tk.StringVar()
@@ -765,7 +826,7 @@ class IPSwitcherGUI:
         for label, var_name in [
             (t("new_ip"),   "lbl_ip"),
             (t("mask"),     "lbl_mask"),
-            (t("gateway"),  "lbl_gw"),
+            (t("destino"),  "lbl_gw"),
         ]:
             col = ttk.Frame(detail_frame, style="Panel.TFrame")
             col.pack(side="left", expand=True, fill="x", padx=12)
@@ -773,13 +834,13 @@ class IPSwitcherGUI:
             tk.Label(
                 col, text=label,
                 bg=c["panel"], fg=c["text_dim"],
-                font=("Consolas", 8),
+                font=("DejaVu Sans Mono", 8),
             ).pack(anchor="w")
 
             lbl = tk.Label(
                 col, text="—",
                 bg=c["panel"], fg=c["accent"],
-                font=("Consolas", 11, "bold"),
+                font=("DejaVu Sans Mono", 11, "bold"),
             )
             lbl.pack(anchor="w")
             setattr(self, var_name, lbl)
@@ -799,13 +860,13 @@ class IPSwitcherGUI:
         tk.Label(
             log_frame, text="LOG",
             bg=c["bg"], fg=c["text_dim"],
-            font=("Consolas", 8),
+            font=("DejaVu Sans Mono", 8),
         ).pack(anchor="w")
 
         self.log_box = tk.Text(
             log_frame,
             bg=c["panel"], fg=c["text"],
-            font=("Consolas", 9),
+            font=("DejaVu Sans Mono", 9),
             relief="flat",
             height=8,
             state="disabled",
@@ -845,7 +906,7 @@ class IPSwitcherGUI:
             p = self.profiles[key]
             self.lbl_ip.configure(text=p["ip"])
             self.lbl_mask.configure(text=p["mask"])
-            self.lbl_gw.configure(text=p["gateway"])
+            self.lbl_gw.configure(text=p["destino"])
 
     def _apply(self) -> None:
         """Valida la selección y aplica el perfil en un hilo separado."""
