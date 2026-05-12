@@ -559,13 +559,17 @@ class IPSwitcherGUI:
         y    = (sy - h) // 2
         self.root.geometry("{}x{}+{}+{}".format(w, h, x, y))
 
-        # Icono (sólo si existe el .ico)
-        icon_path = _BASE_DIR / "assets" / "ipswitcher.ico"
-        if icon_path.exists():
-            try:
-                self.root.iconbitmap(str(icon_path))
-            except Exception:
-                pass
+        # Icono — .ico en Windows, .png en Linux
+        try:
+            ico_path = _BASE_DIR / "assets" / "ipswitcher.ico"
+            png_path = _BASE_DIR / "assets" / "ipswitcher.png"
+            if ico_path.exists():
+                self.root.iconbitmap(str(ico_path))
+            elif png_path.exists():
+                img = tk.PhotoImage(file=str(png_path))
+                self.root.iconphoto(True, img)
+        except Exception:
+            pass
 
         # Estilos ttk
         self._configure_styles()
@@ -607,15 +611,34 @@ class IPSwitcherGUI:
             font=("Consolas", 10, "bold"),
         )
 
-        # ComboBox
+        # ComboBox — colores del campo y del texto seleccionado
         style.configure(
             "App.TCombobox",
             fieldbackground=c["panel"],
-            background=c["panel"],
+            background=c["accent"],
             foreground=c["text"],
             selectbackground=c["accent2"],
+            selectforeground=c["text"],
+            insertcolor=c["text"],
             font=("Consolas", 10),
         )
+        style.map(
+            "App.TCombobox",
+            fieldbackground=[("readonly", c["panel"]),
+                             ("disabled", c["bg"])],
+            foreground=[("readonly", c["text"]),
+                        ("disabled", c["text_dim"])],
+            selectbackground=[("readonly", c["accent2"])],
+            selectforeground=[("readonly", c["text"])],
+            background=[("readonly", c["accent"]),
+                        ("active",   c["accent2"])],
+        )
+        # Forzar colores internos de la lista desplegable
+        self.root.option_add("*TCombobox*Listbox.background",      c["panel"])
+        self.root.option_add("*TCombobox*Listbox.foreground",      c["text"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", c["accent2"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", c["text"])
+        self.root.option_add("*TCombobox*Listbox.font",            "Consolas 10")
 
         # Botón principal
         style.configure(
@@ -629,20 +652,7 @@ class IPSwitcherGUI:
         style.map(
             "Apply.TButton",
             background=[("active", c["accent2"]), ("pressed", c["accent2"])],
-        )
-
-        # Botón secundario
-        style.configure(
-            "Sec.TButton",
-            background=c["panel"],
-            foreground=c["text"],
-            font=("Consolas", 9),
-            padding=(6, 4),
-            relief="flat",
-        )
-        style.map(
-            "Sec.TButton",
-            background=[("active", c["border"])],
+            foreground=[("active", c["text"]),    ("pressed", c["text"])],
         )
 
     # ------------------------------------------------------------------
@@ -710,10 +720,19 @@ class IPSwitcherGUI:
         self.cb_adapter.pack(side="left", padx=(8, 0))
         self.cb_adapter.bind("<<ComboboxSelected>>", self._on_adapter_change)
 
-        ttk.Button(
+        tk.Button(
             row1,
             text="⟳ " + t("btn_refresh"),
-            style="Sec.TButton",
+            bg=c["accent"],
+            fg=c["bg"],
+            activebackground=c["accent2"],
+            activeforeground=c["text"],
+            font=("Consolas", 9, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
             command=self._refresh_adapters,
         ).pack(side="left", padx=(8, 0))
 
@@ -815,10 +834,12 @@ class IPSwitcherGUI:
 
     def _on_adapter_change(self, _event=None) -> None:
         """Callback al cambiar el adaptador seleccionado."""
+        self.cb_adapter.selection_clear()
         self._log("info", "Adaptador: {}".format(self.adapter_var.get()))
 
     def _on_profile_change(self, _event=None) -> None:
         """Callback al cambiar el perfil; actualiza los labels de detalle."""
+        self.cb_profile.selection_clear()
         key = self.profile_var.get()
         if key and key in self.profiles:
             p = self.profiles[key]

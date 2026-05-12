@@ -76,6 +76,7 @@ jobs:
             --onefile \
             --name "${{ env.APP_NAME }}" \
             --add-data "$GITHUB_WORKSPACE/ips.json:." \
+            --add-data "$GITHUB_WORKSPACE/assets:assets" \
             --distpath dist/linux \
             --workpath build/pyinstaller \
             --specpath build \
@@ -186,6 +187,7 @@ jobs:
             --windowed `
             --name "${{ env.APP_NAME }}" `
             --add-data "$env:GITHUB_WORKSPACE\ips.json;." `
+            --add-data "$env:GITHUB_WORKSPACE\assets;assets" `
             --distpath dist\windows `
             --workpath build\pyinstaller_win `
             --specpath build `
