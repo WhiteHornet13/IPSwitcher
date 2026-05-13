@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.1.0
+Versión   : 1.1.1
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -639,13 +639,13 @@ class IPSwitcherGUI:
         """Define estilos personalizados para los widgets ttk."""
         style = ttk.Style(self.root)
         style.theme_use("clam")
-
+        
         c = self.COLORS
 
         # Marco general
         style.configure("App.TFrame",     background=c["bg"])
         style.configure("Panel.TFrame",   background=c["panel"])
-
+        
         # Etiquetas
         style.configure(
             "App.TLabel",
@@ -671,7 +671,7 @@ class IPSwitcherGUI:
             foreground=c["accent"],
             font=("DejaVu Sans Mono", 10, "bold"),
         )
-
+        
         # ComboBox — colores del campo y del texto seleccionado
         style.configure(
             "App.TCombobox",
@@ -683,6 +683,7 @@ class IPSwitcherGUI:
             insertcolor=c["text"],
             font=("DejaVu Sans Mono", 10),
         )
+        
         style.map(
             "App.TCombobox",
             fieldbackground=[("readonly", c["panel"]),
@@ -694,13 +695,14 @@ class IPSwitcherGUI:
             background=[("readonly", c["accent"]),
                         ("active",   c["accent2"])],
         )
+        
         # Forzar colores internos de la lista desplegable
         self.root.option_add("*TCombobox*Listbox.background",      c["panel"])
         self.root.option_add("*TCombobox*Listbox.foreground",      c["text"])
         self.root.option_add("*TCombobox*Listbox.selectBackground", c["accent2"])
         self.root.option_add("*TCombobox*Listbox.selectForeground", c["text"])
-        self.root.option_add("*TCombobox*Listbox.font",            "DejaVu Sans Mono 10")
-
+        self.root.option_add("*TCombobox*Listbox.font",            "DejaVu Sans Mono", 10)
+        
         # Botón principal
         style.configure(
             "Apply.TButton",
@@ -715,6 +717,7 @@ class IPSwitcherGUI:
             background=[("active", c["accent2"]), ("pressed", c["accent2"])],
             foreground=[("active", c["text"]),    ("pressed", c["text"])],
         )
+        
 
     # ------------------------------------------------------------------
     # Construcción de la UI
@@ -895,12 +898,12 @@ class IPSwitcherGUI:
 
     def _on_adapter_change(self, _event=None) -> None:
         """Callback al cambiar el adaptador seleccionado."""
-        self.cb_adapter.selection_clear()
+        #self.cb_adapter.selection_clear()
         self._log("info", "Adaptador: {}".format(self.adapter_var.get()))
 
     def _on_profile_change(self, _event=None) -> None:
         """Callback al cambiar el perfil; actualiza los labels de detalle."""
-        self.cb_profile.selection_clear()
+        #self.cb_profile.selection_clear()
         key = self.profile_var.get()
         if key and key in self.profiles:
             p = self.profiles[key]
