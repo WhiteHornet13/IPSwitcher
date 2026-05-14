@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.1.1
+Versión   : 1.1.2
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -416,7 +416,7 @@ def _find_adapter_with_ip(ip: str) -> str | None:
             if len(parts) >= 4:
                 addr = parts[3].split("/")[0]   # quitar el prefijo CIDR
                 if addr == ip:
-                    return parts[1]             # nombre del adaptador
+                    return parts[1].rstrip(":")  # nombre del adaptador (quitar posible ":" final)
     except Exception:
         pass
     return None
@@ -441,10 +441,16 @@ def _apply_linux(adapter: str, ip: str, mask: str, gateway: str) -> None:
     """
     cidr = _mask_to_cidr(mask)
 
-    # Comprueba si la IP ya está en uso en OTRO adaptador
+    # Comprueba si la IP ya está en uso en OTRO adaptador.
+    # La comprobación se hace ANTES de cualquier modificación para no
+    # dejar el adaptador destino sin IP si hay conflicto.
     existing = _find_adapter_with_ip(ip)
     if existing and existing != adapter:
         raise RuntimeError(t("error_ip_in_use", ip, existing))
+
+    # Si la IP ya está asignada a este mismo adaptador, no hay nada que hacer.
+    if existing == adapter:
+        return
 
     # Elimina IPs existentes para evitar conflictos
     _run(["ip", "addr", "flush", "dev", adapter])
@@ -701,7 +707,7 @@ class IPSwitcherGUI:
         self.root.option_add("*TCombobox*Listbox.foreground",      c["text"])
         self.root.option_add("*TCombobox*Listbox.selectBackground", c["accent2"])
         self.root.option_add("*TCombobox*Listbox.selectForeground", c["text"])
-        self.root.option_add("*TCombobox*Listbox.font",            "DejaVu Sans Mono", 10)
+        self.root.option_add("*TCombobox*Listbox.font",            "DejaVu Sans", 10)
         
         # Botón principal
         style.configure(
