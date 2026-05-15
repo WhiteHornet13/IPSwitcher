@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.1.2
+Versión   : 1.2.0
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -26,6 +26,7 @@ import locale
 import logging
 import argparse
 import platform
+import shutil
 import subprocess
 import threading
 import tkinter as tk
@@ -78,6 +79,10 @@ STRINGS = {
         "confirm_title"    : "Confirmar cambio",
         "error_ip_in_use"  : "La IP {} ya está asignada al adaptador '{}'.",
         "confirm_msg"      : "¿Aplicar IP {} al adaptador {}?",
+        "btn_dhcp_one"     : "DHCP adaptador",
+        "btn_dhcp_all"     : "DHCP todos",
+        "confirm_dhcp_one" : "¿Pasar {} a DHCP automático?",
+        "confirm_dhcp_all" : "¿Pasar TODOS los adaptadores a DHCP automático?",
     },
     "en": {
         "title"            : "IP Switcher - IP Changer",
@@ -104,6 +109,10 @@ STRINGS = {
         "confirm_title"    : "Confirm change",
         "error_ip_in_use"  : "IP {} is already assigned to adapter '{}'.",
         "confirm_msg"      : "Apply IP {} to adapter {}?",
+        "btn_dhcp_one"     : "DHCP adapter",
+        "btn_dhcp_all"     : "DHCP all",
+        "confirm_dhcp_one" : "Set {} to automatic DHCP?",
+        "confirm_dhcp_all" : "Set ALL adapters to automatic DHCP?",
     },
 }
 
@@ -323,6 +332,59 @@ def get_network_adapters() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Detección del hardware de los adaptadores de red
+# ---------------------------------------------------------------------------
+
+def get_adapter_hardware(adapter: str) -> str:
+    """
+    Devuelve una cadena descriptiva del hardware asociado a un adaptador.
+
+    Linux : lee /sys/class/net/<adapter>/device/modalias o el campo
+            'ID_MODEL_FROM_DATABASE' de udevadm si está disponible.
+            Como fallback compacto usa el driver en /sys/class/net/<iface>/device/driver.
+    Windows: consulta 'netsh interface show interface' (no disponible con detalle;
+             se usa WMI si está accesible).
+
+    Parameters
+    ----------
+    adapter : Nombre del adaptador (ej: 'eth0', 'enp3s0')
+
+    Returns
+    -------
+    Cadena con el modelo/driver, o cadena vacía si no se puede determinar.
+    """
+    if platform.system() != "Linux":
+        return ""
+
+    # Opción 1: udevadm (da el nombre de marketing del hardware)
+    try:
+        result = subprocess.run(
+            ["udevadm", "info", "--query=property", "--path=/sys/class/net/{}".format(adapter)],
+            capture_output=True, text=True, timeout=3,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("ID_MODEL_FROM_DATABASE="):
+                return line.split("=", 1)[1].strip()
+            if line.startswith("ID_MODEL="):
+                return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+
+    # Opción 2: nombre del driver del kernel
+    driver_path = Path("/sys/class/net/{}/device/driver".format(adapter))
+    if driver_path.is_symlink():
+        return "drv:{}".format(Path(os.readlink(str(driver_path))).name)
+
+    # Opción 3: interfaces virtuales (lo, bridge, veth, tun…)
+    type_path = Path("/sys/class/net/{}/type".format(adapter))
+    if type_path.exists():
+        return "(virtual)"
+
+    return ""
+
+
+
+# ---------------------------------------------------------------------------
 # Aplicación del perfil de IP
 # ---------------------------------------------------------------------------
 def apply_profile(adapter: str, profile: dict) -> None:
@@ -493,6 +555,48 @@ def _apply_windows(adapter: str, ip: str, mask: str, gateway: str) -> None:
         cmd += ["gateway={}".format(gateway), "gwmetric=1"]
     _run(cmd)
 
+def set_dhcp(adapter: str) -> None:
+    """
+    Configura un adaptador para obtener IP por DHCP.
+
+    Linux  : usa 'dhclient' o 'dhcpcd' según lo que esté disponible.
+             Primero libera la concesión actual y luego solicita una nueva.
+    Windows: usa 'netsh interface ip set address source=dhcp'.
+
+    Parameters
+    ----------
+    adapter : Nombre del adaptador de red
+
+    Raises
+    ------
+    RuntimeError si ningún cliente DHCP está disponible o el comando falla.
+    """
+    os_name = platform.system()
+
+    if os_name == "Linux":
+        # Flush de la IP estática actual (no falla si ya está vacío)
+        subprocess.run(["ip", "addr", "flush", "dev", adapter], capture_output=True)
+
+        # Preferir dhclient (más universal en Debian/Ubuntu)
+        if shutil.which("dhclient"):
+            _run(["dhclient", "-r", adapter])   # release
+            _run(["dhclient", adapter])          # acquire
+        elif shutil.which("dhcpcd"):
+            _run(["dhcpcd", adapter])
+        else:
+            raise RuntimeError(
+                "No se encontró dhclient ni dhcpcd. "
+                "Instala isc-dhcp-client: sudo apt install isc-dhcp-client"
+            )
+
+    elif os_name == "Windows":
+        _run([
+            "netsh", "interface", "ip", "set", "address",
+            "name={}".format(adapter), "source=dhcp",
+        ])
+    else:
+        raise RuntimeError("Sistema operativo no soportado: {}".format(os_name))
+
 
 # ---------------------------------------------------------------------------
 # Verificación de privilegios
@@ -598,11 +702,12 @@ class IPSwitcherGUI:
         Parameters
         ----------
         root     : Instancia de Tk raíz
-        profiles : Diccionario plano de perfiles { clave: {ip, mask, gateway} }
+        profiles : Diccionario plano de perfiles { clave: {ip, mask, destino} }
         """
         self.root     = root
         self.profiles = profiles
         self.adapters : list[str] = []
+        self._adapter_map: dict[str, str] = {}   # etiqueta_display → nombre_real
 
         self._setup_window()
         self._build_ui()
@@ -619,7 +724,7 @@ class IPSwitcherGUI:
         self.root.configure(bg=self.COLORS["bg"])
 
         # Centrar en pantalla
-        w, h = 600, 520
+        w, h = 800, 640
         sx   = self.root.winfo_screenwidth()
         sy   = self.root.winfo_screenheight()
         x    = (sx - w) // 2
@@ -748,6 +853,7 @@ class IPSwitcherGUI:
             style="App.TLabel",
         ).pack(side="left", padx=(6, 0), pady=(6, 0))
 
+
         # Indicador de privilegios
         priv_ok  = check_privileges()
         priv_txt = "● admin" if priv_ok else "● sin privilegios"
@@ -759,6 +865,18 @@ class IPSwitcherGUI:
             fg=priv_clr,
             font=("DejaVu Sans Mono", 8),
         ).pack(side="right")
+
+
+        # IP actual del adaptador seleccionado (se actualiza con _update_current_ip)
+        self.lbl_header_ip = tk.Label(
+            header,
+            text="IP Actual: —",
+            bg=c["bg"],
+            fg=c["accent"],
+            font=("DejaVu Sans Mono", 9, "bold"),
+        )
+        self.lbl_header_ip.pack(side="left", padx=(24, 0))
+
 
         # Separador
         tk.Frame(self.root, bg=c["accent"], height=1).pack(
@@ -784,7 +902,7 @@ class IPSwitcherGUI:
             row1,
             textvariable=self.adapter_var,
             state="readonly",
-            width=28,
+            width=58,
             style="App.TCombobox",
         )
         self.cb_adapter.pack(side="left", padx=(8, 0))
@@ -822,7 +940,7 @@ class IPSwitcherGUI:
             textvariable=self.profile_var,
             values=sorted(self.profiles.keys()),
             state="readonly",
-            width=36,
+            width=46,
             style="App.TCombobox",
         )
         self.cb_profile.pack(side="left", padx=(8, 0))
@@ -833,9 +951,9 @@ class IPSwitcherGUI:
         detail_frame.pack(fill="x", padx=18, pady=4, ipady=8)
 
         for label, var_name in [
-            (t("new_ip"),   "lbl_ip"),
-            (t("mask"),     "lbl_mask"),
-            (t("destino"),  "lbl_gw"),
+            (t("new_ip"),     "lbl_ip"),
+            (t("mask"),       "lbl_mask"),
+            (t("destino"),    "lbl_gw"),
         ]:
             col = ttk.Frame(detail_frame, style="Panel.TFrame")
             col.pack(side="left", expand=True, fill="x", padx=12)
@@ -861,6 +979,37 @@ class IPSwitcherGUI:
             style="Apply.TButton",
             command=self._apply,
         ).pack(fill="x", padx=18, pady=(10, 4))
+
+        # ── Fila de botones DHCP ─────────────────────────────────────────
+        dhcp_row = ttk.Frame(self.root, style="App.TFrame")
+        dhcp_row.pack(fill="x", padx=18, pady=(0, 4))
+
+        tk.Button(
+            dhcp_row,
+            text="⇄ " + t("btn_dhcp_one"),
+            bg=c["accent2"],
+            fg=c["text"],
+            activebackground=c["accent"],
+            activeforeground=c["bg"],
+            font=("DejaVu Sans Mono", 9, "bold"),
+            relief="flat", bd=0, padx=10, pady=4,
+            cursor="hand2",
+            command=self._dhcp_selected,
+        ).pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+        tk.Button(
+            dhcp_row,
+            text="⇄ " + t("btn_dhcp_all"),
+            bg=c["accent2"],
+            fg=c["text"],
+            activebackground=c["accent"],
+            activeforeground=c["bg"],
+            font=("DejaVu Sans Mono", 9, "bold"),
+            relief="flat", bd=0, padx=10, pady=4,
+            cursor="hand2",
+            command=self._dhcp_all,
+        ).pack(side="left", expand=True, fill="x", padx=(4, 0))
+
 
         # ── Log de mensajes ──────────────────────────────────────────────
         log_frame = ttk.Frame(self.root, style="App.TFrame")
@@ -894,18 +1043,59 @@ class IPSwitcherGUI:
     # Eventos y lógica
     # ------------------------------------------------------------------
 
+
     def _refresh_adapters(self) -> None:
-        """Actualiza la lista de adaptadores de red disponibles."""
-        self.adapters = get_network_adapters()
-        self.cb_adapter.configure(values=self.adapters)
-        if self.adapters:
+        """
+        Actualiza la lista de adaptadores con nombre real + hardware detectado.
+        Mantiene un mapa interno etiqueta→nombre para recuperar el nombre real
+        al aplicar perfiles.
+        """
+        raw = get_network_adapters()          # nombres del SO
+        self._adapter_map = {}
+        labels = []
+        for name in raw:
+            hw = get_adapter_hardware(name)
+            label = "{:<12} {}".format(name, hw).rstrip() if hw else name
+            self._adapter_map[label] = name
+            labels.append(label)
+
+        self.adapters = raw
+        self.cb_adapter.configure(values=labels)
+        if labels:
             self.cb_adapter.current(0)
-        self._log("info", "Adaptadores detectados: {}".format(len(self.adapters)))
+            self._update_current_ip(raw[0])
+        self._log("info", "Adaptadores detectados: {}".format(len(raw)))
+
+    def _update_current_ip(self, adapter: str) -> None:
+        """
+        Consulta y muestra la IP actualmente asignada al adaptador dado.
+
+        Parameters
+        ----------
+        adapter : Nombre real del adaptador (sin la etiqueta de hardware)
+        """
+        ip = ""
+        try:
+            result = subprocess.run(
+                ["ip", "-o", "-4", "addr", "show", "dev", adapter],
+                capture_output=True, text=True,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 4:
+                    ip = parts[3].split("/")[0]
+                    break
+        except Exception:
+            pass
+        self.lbl_header_ip.configure(text="IP Actual: {}".format(ip) if ip else "IP Actual: —")
+
 
     def _on_adapter_change(self, _event=None) -> None:
-        """Callback al cambiar el adaptador seleccionado."""
-        #self.cb_adapter.selection_clear()
-        self._log("info", "Adaptador: {}".format(self.adapter_var.get()))
+        """Callback al cambiar el adaptador: actualiza IP actual en pantalla."""
+        label   = self.adapter_var.get()
+        adapter = self._adapter_map.get(label, label)   # nombre real
+        self._update_current_ip(adapter)
+        self._log("info", "Adaptador: {}".format(adapter))
 
     def _on_profile_change(self, _event=None) -> None:
         """Callback al cambiar el perfil; actualiza los labels de detalle."""
@@ -919,7 +1109,8 @@ class IPSwitcherGUI:
 
     def _apply(self) -> None:
         """Valida la selección y aplica el perfil en un hilo separado."""
-        adapter = self.adapter_var.get().strip()
+        label       = self.adapter_var.get().strip()
+        adapter     = self._adapter_map.get(label, label)   # nombre real del SO
         profile_key = self.profile_var.get().strip()
 
         if not adapter:
@@ -946,17 +1137,71 @@ class IPSwitcherGUI:
             daemon=True,
         ).start()
 
+
     def _apply_thread(self, adapter: str, profile_key: str, profile: dict) -> None:
         """
         Hilo de aplicación del perfil.
-        Actualiza el log con el resultado.
+        Actualiza el log con el resultado y refresca la IP mostrada
+        en pantalla una vez completada la operación.
         """
         self._log("info", t("log_applying", profile_key, adapter))
         try:
             apply_profile(adapter, profile)
             self._log("ok", t("success"))
+            # Refresca el label de IP actual tras aplicar (con pequeño retardo
+            # para dar tiempo al SO a asignar la dirección)
+            self.root.after(800, self._update_current_ip, adapter)
         except RuntimeError as exc:
             self._log("err", t("error_apply", exc))
+
+    def _dhcp_selected(self) -> None:
+        """Pasa el adaptador actualmente seleccionado a DHCP en hilo separado."""
+        label   = self.adapter_var.get().strip()
+        adapter = self._adapter_map.get(label, label)
+        if not adapter:
+            self._log("err", t("error_adapter", "(vacío)"))
+            return
+        if not messagebox.askyesno(
+            t("confirm_title"),
+            t("confirm_dhcp_one", adapter),
+            parent=self.root,
+        ):
+            return
+        threading.Thread(
+            target=self._dhcp_thread, args=([adapter],), daemon=True
+        ).start()
+
+    def _dhcp_all(self) -> None:
+        """Pasa TODOS los adaptadores detectados a DHCP en hilo separado."""
+        if not self.adapters:
+            self._log("warning", t("no_adapters"))
+            return
+        if not messagebox.askyesno(
+            t("confirm_title"),
+            t("confirm_dhcp_all"),
+            parent=self.root,
+        ):
+            return
+        threading.Thread(
+            target=self._dhcp_thread, args=(list(self.adapters),), daemon=True
+        ).start()
+
+    def _dhcp_thread(self, adapters: list[str]) -> None:
+        """
+        Hilo que aplica DHCP sobre la lista de adaptadores recibida.
+        Actualiza el log y refresca la IP mostrada al terminar.
+        """
+        for adapter in adapters:
+            self._log("info", "DHCP → {}".format(adapter))
+            try:
+                set_dhcp(adapter)
+                self._log("ok", "DHCP aplicado en {}.".format(adapter))
+            except RuntimeError as exc:
+                self._log("err", t("error_apply", exc))
+        # Refrescar IP actual del adaptador seleccionado
+        label   = self.adapter_var.get()
+        current = self._adapter_map.get(label, label)
+        self.root.after(1500, self._update_current_ip, current)
 
     def _log(self, tag: str, message: str) -> None:
         """
@@ -1008,6 +1253,70 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version",       version="{} {}".format(APP_NAME, APP_VERSION))
     return parser
 
+def _relaunch_as_admin() -> None:
+    """
+    Relanza el proceso actual con privilegios de administrador/root.
+
+    Linux : intenta pkexec primero (GUI PolicyKit); si no está disponible,
+            cae a sudo en terminal. En ambos casos el proceso hijo hereda
+            todos los argumentos originales.
+    Windows: usa ShellExecuteEx con verbo 'runas' para disparar el diálogo
+             UAC estándar.
+
+    La función termina el proceso actual si el relaunch tiene éxito.
+    Si el usuario cancela la elevación o falla, muestra aviso y continúa
+    sin privilegios (la GUI arrancará en modo lectura).
+    """
+    os_name = platform.system()
+
+    logger.debug("sys.executable: %s", sys.executable)
+    logger.debug("sys.argv: %s", sys.argv)
+    logger.debug("frozen: %s", getattr(sys, 'frozen', False))
+
+    if os_name == "Linux":
+        # sys.argv[0] puede ser relativo; resolver a ruta absoluta
+        script = str(Path(sys.argv[0]).resolve())
+        args   = sys.argv[1:]
+
+        pkexec = shutil.which("pkexec")
+        if pkexec:
+            try:
+                # Preservar DISPLAY y XAUTHORITY para que Tkinter funcione bajo pkexec
+                os.environ.setdefault("DISPLAY", ":0")
+                os.execvp(pkexec, [pkexec, "--keep-cwd",
+                                   "env",
+                                   "DISPLAY={}".format(os.environ.get("DISPLAY", ":0")),
+                                   "XAUTHORITY={}".format(os.environ.get("XAUTHORITY", "")),
+                                   sys.executable, script] + args)
+            except OSError:
+                pass
+
+        sudo = shutil.which("sudo")
+        if sudo:
+            try:
+                os.execvp(sudo, [sudo, "-E",   # -E preserva el entorno completo
+                                 sys.executable, script] + args)
+            except OSError:
+                pass
+
+        # Si llegamos aquí, no se pudo elevar
+        logger.warning("No se pudo elevar a root. La app continuará sin privilegios.")
+
+    elif os_name == "Windows":
+        import ctypes
+        exe  = sys.executable if not getattr(sys, "frozen", False) else sys.argv[0]
+        params = " ".join('"{}"'.format(a) for a in sys.argv[1:])
+        ret = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", exe, params, None, 1   # 1 = SW_SHOWNORMAL
+        )
+        if ret > 32:
+            # Proceso elevado lanzado; cerrar el actual
+            sys.exit(0)
+        else:
+            logger.warning("UAC cancelado o error (%s). Continuando sin privilegios.", ret)
+
+
+
 
 def main() -> None:
     """
@@ -1049,14 +1358,16 @@ def main() -> None:
         cli_apply(args.adapter, args.profile, profiles)
         sys.exit(0)
 
+
     # ── Modo GUI (por defecto o con --gui) ───────────────────────────────
+    if not check_privileges():
+        _relaunch_as_admin()   # no retorna si el relaunch tiene éxito
+
     root = tk.Tk()
     app  = IPSwitcherGUI(root, profiles)
-
-    if not check_privileges():
-        messagebox.showwarning(APP_NAME, t("error_root"))
-
     root.mainloop()
+
+
 
 
 if __name__ == "__main__":
