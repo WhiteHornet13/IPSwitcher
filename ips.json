@@ -2,22 +2,28 @@
   "IPs": {
     "lineas": [
       {
-        "nombre": "Linea 1",
+        "nombre": "Linea 7",
         "maquinas": [
           {
-            "nombre": "Maquina 1",
+            "nombre": "Bobinadora",
             "equipos": [
               {
-                "nombre": "Equipo 1",
-                "IP-PC": "192.168.1.10",
+                "nombre": "PLC Perini",
+                "IP-PC": "192.168.214.246",
                 "Mascara": "255.255.255.0",
-                "IP-Destino": "192.168.1.254"
+                "IP-Destino": "0.0.0.0"
               },
               {
-                "nombre": "Equipo 2",
-                "IP-PC": "192.168.1.11",
+                "nombre": "PLC Gambini",
+                "IP-PC": "192.168.214.246",
                 "Mascara": "255.255.255.0",
-                "IP-Destino": "192.168.1.254"
+                "IP-Destino": "0.0.0.0"
+              },
+ 	      {
+                "nombre": "PILZ",
+                "IP-PC": "192.168.1.200",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "0.0.0.0"
               }
             ]
           },
@@ -35,42 +41,77 @@
         ]
       },
       {
-        "nombre": "Linea 2",
+        "nombre": "Linea 8",
         "maquinas": [
           {
-            "nombre": "Maquina 1",
+            "nombre": "Bobinadora",
             "equipos": [
               {
-                "nombre": "Equipo 1",
-                "IP-PC": "192.168.2.10",
+                "nombre": "PLC Perini",
+                "IP-PC": "192.168.214.246",
                 "Mascara": "255.255.255.0",
-                "IP-Destino": "192.168.2.254"
+                "IP-Destino": "...."
+              },
+	      {
+                "nombre": "PLC Gambini",
+                "IP-PC": "192.168.214.246",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "...."
+              },
+ 	      {
+                "nombre": "PILZ",
+                "IP-PC": "192.168.1.200",
+                "Mascara": "255.255.255.0",
+                "IP-Destino": "0.0.0.0"
               }
             ]
           }
         ]
       },
       {
-        "nombre": "Linea 3",
+        "nombre": "Linea 9",
         "maquinas": [
           {
-            "nombre": "Maquina 1",
+            "nombre": "Bobinadora",
             "equipos": [
               {
-                "nombre": "Equipo 1",
-                "IP-PC": "192.168.3.10",
+                "nombre": "Simotion REW",
+                "IP-PC": "10.202.2.246",
+                "Mascara": "255.0.0.0",
+                "IP-Destino": "0.0.0.0"
+              },
+              {
+                "nombre": "Simotion LINE",
+                "IP-PC": "10.202.2.246",
+                "Mascara": "255.0.0.0",
+                "IP-Destino": "0.0.0.0"
+              }
+            ]
+          },
+          {
+            "nombre": "Tubera",
+            "equipos": [
+              {
+                "nombre": "Simotion",
+                "IP-PC": "192.168.214.123",
                 "Mascara": "255.255.255.0",
-                "IP-Destino": "192.168.3.254"
+                "IP-Destino": "0.0.0.0"
+              },
+              {
+                "nombre": "PLC2",
+                "IP-PC": "10.202.2.246",
+                "Mascara": "255.0.0.0",
+                "IP-Destino": "0.0.0.0"
               }
             ]
           }
         ]
       },
       {
-        "nombre": "Linea 4",
+        "nombre": "Transfer",
         "maquinas": [
           {
-            "nombre": "Maquina 1",
+            "nombre": "Vagoneta 1",
             "equipos": [
               {
                 "nombre": "Equipo 1",
@@ -83,10 +124,10 @@
         ]
       },
       {
-        "nombre": "Linea 5",
+        "nombre": "M20",
         "maquinas": [
           {
-            "nombre": "Maquina 1",
+            "nombre": "Extractor mandrinos",
             "equipos": [
               {
                 "nombre": "Equipo 1",
