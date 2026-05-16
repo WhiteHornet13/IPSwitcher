@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.2.0
+Versión   : 1.2.1
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -38,7 +38,7 @@ from typing import Optional
 # Constantes globales
 # ---------------------------------------------------------------------------
 APP_NAME    = "IPSwitcher"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.1"
 APP_REPO    = "https://github.com/WhiteHornet13/IPSwitcher"
 
 # Resolución de la ruta al JSON de perfiles.
@@ -1257,64 +1257,63 @@ def _relaunch_as_admin() -> None:
     """
     Relanza el proceso actual con privilegios de administrador/root.
 
-    Linux : intenta pkexec primero (GUI PolicyKit); si no está disponible,
-            cae a sudo en terminal. En ambos casos el proceso hijo hereda
-            todos los argumentos originales.
+    Linux  : intenta pkexec primero (GUI PolicyKit); si no está disponible,
+             cae a sudo. Distingue entre ejecutable compilado (PyInstaller)
+             y script Python para no duplicar la ruta como argumento.
     Windows: usa ShellExecuteEx con verbo 'runas' para disparar el diálogo
              UAC estándar.
 
     La función termina el proceso actual si el relaunch tiene éxito.
-    Si el usuario cancela la elevación o falla, muestra aviso y continúa
-    sin privilegios (la GUI arrancará en modo lectura).
+    Si el usuario cancela la elevación o falla, continúa sin privilegios.
     """
     os_name = platform.system()
 
     logger.debug("sys.executable: %s", sys.executable)
     logger.debug("sys.argv: %s", sys.argv)
-    logger.debug("frozen: %s", getattr(sys, 'frozen', False))
+    logger.debug("frozen: %s", getattr(sys, "frozen", False))
 
     if os_name == "Linux":
-        # sys.argv[0] puede ser relativo; resolver a ruta absoluta
-        script = str(Path(sys.argv[0]).resolve())
-        args   = sys.argv[1:]
+        # Con PyInstaller sys.executable ES el binario autónomo;
+        # no hay script separado que pasarle como argumento adicional.
+        if getattr(sys, "frozen", False):
+            target = [str(Path(sys.executable).resolve())]
+        else:
+            target = [sys.executable, str(Path(sys.argv[0]).resolve())]
+
+        args = sys.argv[1:]
 
         pkexec = shutil.which("pkexec")
         if pkexec:
             try:
-                # Preservar DISPLAY y XAUTHORITY para que Tkinter funcione bajo pkexec
                 os.environ.setdefault("DISPLAY", ":0")
-                os.execvp(pkexec, [pkexec, "--keep-cwd",
-                                   "env",
-                                   "DISPLAY={}".format(os.environ.get("DISPLAY", ":0")),
-                                   "XAUTHORITY={}".format(os.environ.get("XAUTHORITY", "")),
-                                   sys.executable, script] + args)
+                os.execvp(pkexec, [
+                    pkexec, "--keep-cwd", "env",
+                    "DISPLAY={}".format(os.environ.get("DISPLAY", ":0")),
+                    "XAUTHORITY={}".format(os.environ.get("XAUTHORITY", "")),
+                ] + target + args)
             except OSError:
                 pass
 
         sudo = shutil.which("sudo")
         if sudo:
             try:
-                os.execvp(sudo, [sudo, "-E",   # -E preserva el entorno completo
-                                 sys.executable, script] + args)
+                os.execvp(sudo, [sudo, "-E"] + target + args)
             except OSError:
                 pass
 
-        # Si llegamos aquí, no se pudo elevar
         logger.warning("No se pudo elevar a root. La app continuará sin privilegios.")
 
     elif os_name == "Windows":
         import ctypes
-        exe  = sys.executable if not getattr(sys, "frozen", False) else sys.argv[0]
+        exe    = sys.executable if not getattr(sys, "frozen", False) else sys.argv[0]
         params = " ".join('"{}"'.format(a) for a in sys.argv[1:])
-        ret = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", exe, params, None, 1   # 1 = SW_SHOWNORMAL
+        ret    = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", exe, params, None, 1
         )
         if ret > 32:
-            # Proceso elevado lanzado; cerrar el actual
             sys.exit(0)
         else:
             logger.warning("UAC cancelado o error (%s). Continuando sin privilegios.", ret)
-
 
 
 
