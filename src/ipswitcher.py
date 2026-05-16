@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.2.2
+Versión   : 1.2.3
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -38,7 +38,7 @@ from typing import Optional
 # Constantes globales
 # ---------------------------------------------------------------------------
 APP_NAME    = "IPSwitcher"
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 APP_REPO    = "https://github.com/WhiteHornet13/IPSwitcher"
 
 # Resolución de la ruta al JSON de perfiles.
@@ -314,7 +314,7 @@ def get_network_adapters() -> list[str]:
         try:
             result = subprocess.run(
                 ["netsh", "interface", "show", "interface"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=10,**_POPEN_FLAGS,
             )
             # Cada línea de la salida contiene el nombre del adaptador al final
             for line in result.stdout.splitlines():
@@ -361,7 +361,7 @@ def get_adapter_hardware(adapter: str) -> str:
             result = subprocess.run(
                 ["udevadm", "info", "--query=property",
                  "--path=/sys/class/net/{}".format(adapter)],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True, text=True, timeout=5,**_POPEN_FLAGS,
             )
             for line in result.stdout.splitlines():
                 if line.startswith("ID_MODEL_FROM_DATABASE="):
@@ -458,6 +458,14 @@ def _mask_to_cidr(mask: str) -> int:
     return sum(bin(int(octet)).count("1") for octet in mask.split("."))
 
 
+# En Windows, evita que subprocess abra ventanas de consola visibles.
+# En Linux el flag no existe, por lo que el dict queda vacío.
+_POPEN_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if platform.system() == "Windows"
+    else {}
+)
+
 def _run(cmd: list[str]) -> None:
     """
     Ejecuta un comando del sistema y lanza RuntimeError si falla.
@@ -467,9 +475,10 @@ def _run(cmd: list[str]) -> None:
     cmd : Lista de tokens del comando
     """
     logger.debug("Ejecutando: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True,**(_POPEN_FLAGS),)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
 
 def _find_adapter_with_ip(ip: str) -> str | None:
     """
@@ -490,6 +499,7 @@ def _find_adapter_with_ip(ip: str) -> str | None:
         result = subprocess.run(
             ["ip", "-o", "-4", "addr", "show"],
             capture_output=True, text=True,
+            **_POPEN_FLAGS,
         )
         for line in result.stdout.splitlines():
             # Formato: "2: eth0    inet 192.168.1.10/24 ..."
@@ -548,6 +558,7 @@ def _apply_linux(adapter: str, ip: str, mask: str, gateway: str) -> None:
         subprocess.run(
             ["ip", "route", "del", "default", "dev", adapter],
             capture_output=True,
+            **_POPEN_FLAGS,
         )
         _run(["ip", "route", "add", "default", "via", gateway, "dev", adapter])
 
@@ -1099,7 +1110,7 @@ class IPSwitcherGUI:
             if platform.system() == "Linux":
                 result = subprocess.run(
                     ["ip", "-o", "-4", "addr", "show", "dev", adapter],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, **_POPEN_FLAGS,
                 )
                 for line in result.stdout.splitlines():
                     parts = line.split()
@@ -1110,11 +1121,14 @@ class IPSwitcherGUI:
                 result = subprocess.run(
                     ["netsh", "interface", "ip", "show", "address",
                      "name={}".format(adapter)],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, **_POPEN_FLAGS,
                 )
                 for line in result.stdout.splitlines():
                     line = line.strip()
-                    if line.startswith("IP Address:"):
+                    # netsh varía según idioma del SO:
+                    # en-US → "IP Address:  x.x.x.x"
+                    # es-ES → "Dirección IP: x.x.x.x"
+                    if line.startswith(("IP Address:", "Dirección IP:")):
                         ip = line.split(":", 1)[1].strip()
                         break
         except Exception:

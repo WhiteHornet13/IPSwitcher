@@ -34,7 +34,7 @@ concurrency:
 
 env:
   APP_NAME:    "IPSwitcher"
-  APP_VERSION: "1.2.2"
+  APP_VERSION: "1.2.3"
   PYTHON_VER:  "3.10"
 
 # =============================================================================
