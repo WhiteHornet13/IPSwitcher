@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.2.1
+Versión   : 1.2.2
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -38,7 +38,7 @@ from typing import Optional
 # Constantes globales
 # ---------------------------------------------------------------------------
 APP_NAME    = "IPSwitcher"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 APP_REPO    = "https://github.com/WhiteHornet13/IPSwitcher"
 
 # Resolución de la ruta al JSON de perfiles.
@@ -339,46 +339,65 @@ def get_adapter_hardware(adapter: str) -> str:
     """
     Devuelve una cadena descriptiva del hardware asociado a un adaptador.
 
-    Linux : lee /sys/class/net/<adapter>/device/modalias o el campo
-            'ID_MODEL_FROM_DATABASE' de udevadm si está disponible.
-            Como fallback compacto usa el driver en /sys/class/net/<iface>/device/driver.
-    Windows: consulta 'netsh interface show interface' (no disponible con detalle;
-             se usa WMI si está accesible).
+    Linux  : lee el campo 'ID_MODEL_FROM_DATABASE' o 'ID_MODEL' de udevadm.
+             Fallback al nombre del driver en /sys/class/net/<iface>/device/driver.
+             Si ninguno aplica (interfaz virtual), devuelve '(virtual)'.
+    Windows: consulta WMI (Win32_NetworkAdapter) via PowerShell para obtener
+             el nombre del adaptador tal como lo reporta el fabricante.
 
     Parameters
     ----------
-    adapter : Nombre del adaptador (ej: 'eth0', 'enp3s0')
+    adapter : Nombre del adaptador (ej: 'eth0', 'enp3s0', 'Ethernet')
 
     Returns
     -------
     Cadena con el modelo/driver, o cadena vacía si no se puede determinar.
     """
-    if platform.system() != "Linux":
-        return ""
+    os_name = platform.system()
 
-    # Opción 1: udevadm (da el nombre de marketing del hardware)
-    try:
-        result = subprocess.run(
-            ["udevadm", "info", "--query=property", "--path=/sys/class/net/{}".format(adapter)],
-            capture_output=True, text=True, timeout=3,
-        )
-        for line in result.stdout.splitlines():
-            if line.startswith("ID_MODEL_FROM_DATABASE="):
-                return line.split("=", 1)[1].strip()
-            if line.startswith("ID_MODEL="):
-                return line.split("=", 1)[1].strip()
-    except Exception:
-        pass
+    if os_name == "Linux":
+        # Opción 1: udevadm (da el nombre de marketing del hardware)
+        try:
+            result = subprocess.run(
+                ["udevadm", "info", "--query=property",
+                 "--path=/sys/class/net/{}".format(adapter)],
+                capture_output=True, text=True, timeout=3,
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("ID_MODEL_FROM_DATABASE="):
+                    return line.split("=", 1)[1].strip()
+                if line.startswith("ID_MODEL="):
+                    return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
 
-    # Opción 2: nombre del driver del kernel
-    driver_path = Path("/sys/class/net/{}/device/driver".format(adapter))
-    if driver_path.is_symlink():
-        return "drv:{}".format(Path(os.readlink(str(driver_path))).name)
+        # Opción 2: nombre del driver del kernel
+        driver_path = Path("/sys/class/net/{}/device/driver".format(adapter))
+        if driver_path.is_symlink():
+            return "drv:{}".format(Path(os.readlink(str(driver_path))).name)
 
-    # Opción 3: interfaces virtuales (lo, bridge, veth, tun…)
-    type_path = Path("/sys/class/net/{}/type".format(adapter))
-    if type_path.exists():
-        return "(virtual)"
+        # Opción 3: interfaz virtual (lo, bridge, veth, tun…)
+        type_path = Path("/sys/class/net/{}/type".format(adapter))
+        if type_path.exists():
+            return "(virtual)"
+
+    elif os_name == "Windows":
+        try:
+            script = (
+                "Get-WmiObject Win32_NetworkAdapter | "
+                "Where-Object {{ $_.NetConnectionID -eq '{name}' }} | "
+                "Select-Object -ExpandProperty Name"
+            ).format(name=adapter.replace("'", "''"))
+
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True, text=True, timeout=5,
+            )
+            lines = result.stdout.strip().splitlines()
+            if lines:
+                return lines[0].strip()
+        except Exception:
+            pass
 
     return ""
 
@@ -1069,6 +1088,7 @@ class IPSwitcherGUI:
     def _update_current_ip(self, adapter: str) -> None:
         """
         Consulta y muestra la IP actualmente asignada al adaptador dado.
+        Funciona en Linux (iproute2) y Windows (netsh).
 
         Parameters
         ----------
@@ -1076,18 +1096,34 @@ class IPSwitcherGUI:
         """
         ip = ""
         try:
-            result = subprocess.run(
-                ["ip", "-o", "-4", "addr", "show", "dev", adapter],
-                capture_output=True, text=True,
-            )
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 4:
-                    ip = parts[3].split("/")[0]
-                    break
+            if platform.system() == "Linux":
+                result = subprocess.run(
+                    ["ip", "-o", "-4", "addr", "show", "dev", adapter],
+                    capture_output=True, text=True,
+                )
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        ip = parts[3].split("/")[0]
+                        break
+            elif platform.system() == "Windows":
+                result = subprocess.run(
+                    ["netsh", "interface", "ip", "show", "address",
+                     "name={}".format(adapter)],
+                    capture_output=True, text=True,
+                )
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("IP Address:"):
+                        ip = line.split(":", 1)[1].strip()
+                        break
         except Exception:
             pass
-        self.lbl_header_ip.configure(text="IP Actual: {}".format(ip) if ip else "IP Actual: —")
+        self.lbl_header_ip.configure(
+            text="IP Actual: {}".format(ip) if ip else "IP Actual: —"
+        )
+
+
 
 
     def _on_adapter_change(self, _event=None) -> None:
