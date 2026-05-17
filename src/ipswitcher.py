@@ -6,7 +6,7 @@ IPSwitcher - Network IP Address Switcher
 Aplicación para cambiar la dirección IPv4 de adaptadores de red
 a partir de perfiles almacenados en un archivo JSON.
 
-Versión   : 1.2.3
+Versión   : 1.2.4
 Plataforma: Windows 7/10/11 y Linux (Python 3.10+)
 Autor     : IPSwitcher Project
 Repositorio: https://github.com/WhiteHornet13/IPSwitcher
@@ -38,7 +38,7 @@ from typing import Optional
 # Constantes globales
 # ---------------------------------------------------------------------------
 APP_NAME    = "IPSwitcher"
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 APP_REPO    = "https://github.com/WhiteHornet13/IPSwitcher"
 
 # Resolución de la ruta al JSON de perfiles.
@@ -335,33 +335,30 @@ def get_network_adapters() -> list[str]:
 # Detección del hardware de los adaptadores de red
 # ---------------------------------------------------------------------------
 
-def get_adapter_hardware(adapter: str) -> str:
+def get_adapter_hardware(adapter: str, _cache: dict | None = None) -> str:
     """
     Devuelve una cadena descriptiva del hardware asociado a un adaptador.
 
-    Linux  : lee el campo 'ID_MODEL_FROM_DATABASE' o 'ID_MODEL' de udevadm.
+    Linux  : lee 'ID_MODEL_FROM_DATABASE' / 'ID_MODEL' de udevadm.
              Fallback al nombre del driver en /sys/class/net/<iface>/device/driver.
-             Si ninguno aplica (interfaz virtual), devuelve '(virtual)'.
-    Windows: consulta WMI (Win32_NetworkAdapter) via PowerShell para obtener
-             el nombre del adaptador tal como lo reporta el fabricante.
+    Windows: usa el diccionario pre-cargado _cache {nombre_adaptador: descripción}
+             generado por get_all_adapter_hardware() para evitar un proceso
+             PowerShell por cada adaptador.
 
     Parameters
     ----------
-    adapter : Nombre del adaptador (ej: 'eth0', 'enp3s0', 'Ethernet')
-
-    Returns
-    -------
-    Cadena con el modelo/driver, o cadena vacía si no se puede determinar.
+    adapter : Nombre del adaptador (ej: 'eth0', 'Ethernet')
+    _cache  : (Windows) dict {nombre → descripción hardware} pre-cargado.
+              Si es None se hace la consulta individual (lento).
     """
     os_name = platform.system()
 
     if os_name == "Linux":
-        # Opción 1: udevadm (da el nombre de marketing del hardware)
         try:
             result = subprocess.run(
                 ["udevadm", "info", "--query=property",
                  "--path=/sys/class/net/{}".format(adapter)],
-                capture_output=True, text=True, timeout=5,**_POPEN_FLAGS,
+                capture_output=True, text=True, timeout=5, **_POPEN_FLAGS,
             )
             for line in result.stdout.splitlines():
                 if line.startswith("ID_MODEL_FROM_DATABASE="):
@@ -371,27 +368,27 @@ def get_adapter_hardware(adapter: str) -> str:
         except Exception:
             pass
 
-        # Opción 2: nombre del driver del kernel
         driver_path = Path("/sys/class/net/{}/device/driver".format(adapter))
         if driver_path.is_symlink():
             return "drv:{}".format(Path(os.readlink(str(driver_path))).name)
 
-        # Opción 3: interfaz virtual (lo, bridge, veth, tun…)
         type_path = Path("/sys/class/net/{}/type".format(adapter))
         if type_path.exists():
             return "(virtual)"
 
     elif os_name == "Windows":
+        if _cache is not None:
+            return _cache.get(adapter, "")
+        # Fallback individual (solo si se llama sin caché)
         try:
             script = (
                 "Get-WmiObject Win32_NetworkAdapter | "
                 "Where-Object {{ $_.NetConnectionID -eq '{name}' }} | "
                 "Select-Object -ExpandProperty Name"
             ).format(name=adapter.replace("'", "''"))
-
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", script],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=5, **_POPEN_FLAGS,
             )
             lines = result.stdout.strip().splitlines()
             if lines:
@@ -400,6 +397,59 @@ def get_adapter_hardware(adapter: str) -> str:
             pass
 
     return ""
+
+
+def get_all_adapter_hardware() -> dict[str, str]:
+    """
+    Devuelve un diccionario {nombre_adaptador: descripción_hardware}
+    para TODOS los adaptadores en una sola consulta.
+
+    Linux  : llama a get_adapter_hardware() por cada interfaz (udevadm
+             es rápido y no abre ventana).
+    Windows: una sola llamada PowerShell/WMI que devuelve todos los
+             adaptadores en JSON, evitando el parpadeo de consola por
+             cada interfaz.
+
+    Returns
+    -------
+    dict vacío si la consulta falla.
+    """
+    os_name = platform.system()
+    result_map: dict[str, str] = {}
+
+    if os_name == "Linux":
+        for iface in get_network_adapters():
+            hw = get_adapter_hardware(iface)
+            if hw:
+                result_map[iface] = hw
+
+    elif os_name == "Windows":
+        try:
+            script = (
+                "Get-WmiObject Win32_NetworkAdapter | "
+                "Where-Object { $_.NetConnectionID -ne $null } | "
+                "Select-Object NetConnectionID, Name | "
+                "ConvertTo-Json -Compress"
+            )
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True, text=True, timeout=10, **_POPEN_FLAGS,
+            )
+            raw = proc.stdout.strip()
+            if raw:
+                # PowerShell devuelve objeto único (no array) si hay 1 sola NIC
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    parsed = [parsed]
+                for entry in parsed:
+                    cid  = (entry.get("NetConnectionID") or "").strip()
+                    name = (entry.get("Name") or "").strip()
+                    if cid and name:
+                        result_map[cid] = name
+        except Exception as exc:
+            logger.debug("get_all_adapter_hardware (Windows) falló: %s", exc)
+
+    return result_map
 
 
 
@@ -1075,26 +1125,32 @@ class IPSwitcherGUI:
 
 
     def _refresh_adapters(self) -> None:
-        """
-        Actualiza la lista de adaptadores con nombre real + hardware detectado.
-        Mantiene un mapa interno etiqueta→nombre para recuperar el nombre real
-        al aplicar perfiles.
-        """
-        raw = get_network_adapters()          # nombres del SO
-        self._adapter_map = {}
-        labels = []
-        for name in raw:
-            hw = get_adapter_hardware(name)
-            label = "{:<12} {}".format(name, hw).rstrip() if hw else name
-            self._adapter_map[label] = name
-            labels.append(label)
+    """
+    Actualiza la lista de adaptadores con nombre real + hardware detectado.
 
-        self.adapters = raw
-        self.cb_adapter.configure(values=labels)
-        if labels:
-            self.cb_adapter.current(0)
-            self._update_current_ip(raw[0])
-        self._log("info", "Adaptadores detectados: {}".format(len(raw)))
+    Realiza una única consulta de hardware para todos los adaptadores
+    (en Windows evita lanzar un proceso PowerShell por cada interfaz).
+    Mantiene un mapa interno etiqueta→nombre para recuperar el nombre
+    real del SO al aplicar perfiles.
+    """
+    raw      = get_network_adapters()
+    hw_cache = get_all_adapter_hardware()   # una sola consulta
+
+    self._adapter_map = {}
+    labels: list[str] = []
+
+    for name in raw:
+        hw    = get_adapter_hardware(name, _cache=hw_cache)
+        label = "{:<12} {}".format(name, hw).rstrip() if hw else name
+        self._adapter_map[label] = name
+        labels.append(label)
+
+    self.adapters = raw
+    self.cb_adapter.configure(values=labels)
+    if labels:
+        self.cb_adapter.current(0)
+        self._update_current_ip(raw[0])
+    self._log("info", "Adaptadores detectados: {}".format(len(raw)))
 
     def _update_current_ip(self, adapter: str) -> None:
         """
@@ -1118,26 +1174,31 @@ class IPSwitcherGUI:
                         ip = parts[3].split("/")[0]
                         break
             elif platform.system() == "Windows":
-                result = subprocess.run(
-                    ["netsh", "interface", "ip", "show", "address",
-                     "name={}".format(adapter)],
-                    capture_output=True, text=True, **_POPEN_FLAGS,
-                )
-                for line in result.stdout.splitlines():
-                    line = line.strip()
-                    # netsh varía según idioma del SO:
-                    # en-US → "IP Address:  x.x.x.x"
-                    # es-ES → "Dirección IP: x.x.x.x"
-                    if line.startswith(("IP Address:", "Dirección IP:")):
-                        ip = line.split(":", 1)[1].strip()
-                        break
+                try:
+                    result = subprocess.run(
+                        ["ipconfig"],
+                        capture_output=True, text=True, **_POPEN_FLAGS,
+                    )
+                    # ipconfig agrupa por adaptador; buscamos el bloque del nuestro
+                    in_block = False
+                    for line in result.stdout.splitlines():
+                        if adapter.lower() in line.lower():
+                            in_block = True
+                        if in_block:
+                            # "Dirección IPv4. . . . . . . . . : 192.168.1.10"
+                            # "IPv4 Address. . . . . . . . . . : 192.168.1.10"
+                            stripped = line.strip()
+                            if stripped.lower().startswith(("ipv4", "direcci")):
+                                ip = stripped.split(":", 1)[1].strip()
+                                break
+                            # Línea en blanco = fin del bloque
+                            if stripped == "" and in_block:
+                                break
         except Exception:
             pass
         self.lbl_header_ip.configure(
             text="IP Actual: {}".format(ip) if ip else "IP Actual: —"
         )
-
-
 
 
     def _on_adapter_change(self, _event=None) -> None:
