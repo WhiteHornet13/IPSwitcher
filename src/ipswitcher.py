@@ -1125,32 +1125,32 @@ class IPSwitcherGUI:
 
 
     def _refresh_adapters(self) -> None:
-    """
-    Actualiza la lista de adaptadores con nombre real + hardware detectado.
+        """
+        Actualiza la lista de adaptadores con nombre real + hardware detectado.
 
-    Realiza una única consulta de hardware para todos los adaptadores
-    (en Windows evita lanzar un proceso PowerShell por cada interfaz).
-    Mantiene un mapa interno etiqueta→nombre para recuperar el nombre
-    real del SO al aplicar perfiles.
-    """
-    raw      = get_network_adapters()
-    hw_cache = get_all_adapter_hardware()   # una sola consulta
+        Realiza una única consulta de hardware para todos los adaptadores
+        (en Windows evita lanzar un proceso PowerShell por cada interfaz).
+        Mantiene un mapa interno etiqueta→nombre para recuperar el nombre
+        real del SO al aplicar perfiles.
+        """
+        raw      = get_network_adapters()
+        hw_cache = get_all_adapter_hardware()   # una sola consulta
 
-    self._adapter_map = {}
-    labels: list[str] = []
+        self._adapter_map = {}
+        labels: list[str] = []
 
-    for name in raw:
-        hw    = get_adapter_hardware(name, _cache=hw_cache)
-        label = "{:<12} {}".format(name, hw).rstrip() if hw else name
-        self._adapter_map[label] = name
-        labels.append(label)
+        for name in raw:
+            hw    = get_adapter_hardware(name, _cache=hw_cache)
+            label = "{:<12} {}".format(name, hw).rstrip() if hw else name
+            self._adapter_map[label] = name
+            labels.append(label)
 
-    self.adapters = raw
-    self.cb_adapter.configure(values=labels)
-    if labels:
-        self.cb_adapter.current(0)
-        self._update_current_ip(raw[0])
-    self._log("info", "Adaptadores detectados: {}".format(len(raw)))
+        self.adapters = raw
+        self.cb_adapter.configure(values=labels)
+        if labels:
+            self.cb_adapter.current(0)
+            self._update_current_ip(raw[0])
+        self._log("info", "Adaptadores detectados: {}".format(len(raw)))
 
     def _update_current_ip(self, adapter: str) -> None:
         """
