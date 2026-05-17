@@ -1155,7 +1155,7 @@ class IPSwitcherGUI:
     def _update_current_ip(self, adapter: str) -> None:
         """
         Consulta y muestra la IP actualmente asignada al adaptador dado.
-        Funciona en Linux (iproute2) y Windows (netsh).
+        Funciona en Linux (iproute2) y Windows (ipconfig).
 
         Parameters
         ----------
@@ -1173,29 +1173,26 @@ class IPSwitcherGUI:
                     if len(parts) >= 4:
                         ip = parts[3].split("/")[0]
                         break
+
             elif platform.system() == "Windows":
-                try:
-                    result = subprocess.run(
-                        ["ipconfig"],
-                        capture_output=True, text=True, **_POPEN_FLAGS,
-                    )
-                    # ipconfig agrupa por adaptador; buscamos el bloque del nuestro
-                    in_block = False
-                    for line in result.stdout.splitlines():
-                        if adapter.lower() in line.lower():
-                            in_block = True
-                        if in_block:
-                            # "Dirección IPv4. . . . . . . . . : 192.168.1.10"
-                            # "IPv4 Address. . . . . . . . . . : 192.168.1.10"
-                            stripped = line.strip()
-                            if stripped.lower().startswith(("ipv4", "direcci")):
-                                ip = stripped.split(":", 1)[1].strip()
-                                break
-                            # Línea en blanco = fin del bloque
-                            if stripped == "" and in_block:
-                                break
+                result = subprocess.run(
+                    ["ipconfig"],
+                    capture_output=True, text=True, **_POPEN_FLAGS,
+                )
+                in_block = False
+                for line in result.stdout.splitlines():
+                    if adapter.lower() in line.lower():
+                        in_block = True
+                    if in_block:
+                        stripped = line.strip()
+                        if stripped.lower().startswith(("ipv4", "direcci")):
+                            ip = stripped.split(":", 1)[1].strip()
+                            break
+                        if stripped == "" and in_block:
+                            break
         except Exception:
             pass
+
         self.lbl_header_ip.configure(
             text="IP Actual: {}".format(ip) if ip else "IP Actual: —"
         )
