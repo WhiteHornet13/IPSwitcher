@@ -90,7 +90,6 @@ jobs:
           python -m PyInstaller \
             --onefile \
             --name "${{ env.APP_NAME }}" \
-            --add-data "src:src" \
             --add-data "ips.json:." \
             $ADD_ASSETS \
             --distpath dist/linux \
@@ -211,7 +210,6 @@ jobs:
             "--onefile",
             "--windowed",
             "--name", "${{ env.APP_NAME }}",
-            "--add-data", "src;src",
             "--add-data", "ips.json;.",
             "--distpath", "dist\windows",
             "--workpath", "build\pyinstaller_win",
