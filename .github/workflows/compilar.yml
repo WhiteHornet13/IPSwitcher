@@ -1,0 +1,343 @@
+# =============================================================================
+# .github/workflows/compilar.yml — Pipeline CI/CD de IPSwitcher
+# =============================================================================
+#
+# Jobs:
+#   build-linux   -> Portable Linux amd64 + paquete .deb
+#   build-windows -> .exe portable Windows 10/11
+#   release       -> GitHub Release con todos los artefactos (solo en tag v*)
+#
+# Se activa en:
+#   - Push a main/master              -> compila, NO publica release
+#   - Push de tag v*                  -> compila Y publica release
+#   - Pull request a main/master      -> solo compila
+#   - workflow_dispatch               -> lanzado manualmente desde la UI
+#
+# Estructura de carpetas en el release:
+#   portables/
+#     IPSwitcher_vX.X.X_linux_amd64
+#     IPSwitcher_vX.X.X_windows.exe
+#   instaladores/
+#     ipswitcher_X.X.X_amd64.deb
+# =============================================================================
+
+name: Compilar IPSwitcher
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_NAME:    "IPSwitcher"
+  APP_VERSION: "1.3.0"
+  PYTHON_VER:  "3.12"
+
+# =============================================================================
+# JOB 1 — Linux: portable + .deb
+# =============================================================================
+jobs:
+  build-linux:
+    name: "Linux — portable + .deb"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ env.PYTHON_VER }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VER }}
+
+      - name: Instalar dependencias del sistema
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            dpkg-dev \
+            python3-tk \
+            binutils
+
+      - name: Instalar dependencias Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      # -----------------------------------------------------------------------
+      # PyInstaller compila el paquete src/ completo.
+      # --add-data "src:src"  copia el paquete dentro del bundle para que los
+      # imports relativos funcionen en tiempo de ejecucion.
+      # El punto de entrada es src/__main__.py.
+      # -----------------------------------------------------------------------
+      - name: Compilar ejecutable portable Linux
+        run: |
+          mkdir -p dist/linux
+
+          # Flag assets solo si existe el directorio
+          ADD_ASSETS=""
+          if [ -d "assets" ]; then
+            ADD_ASSETS="--add-data assets:assets"
+          fi
+
+          python -m PyInstaller \
+            --onefile \
+            --name "${{ env.APP_NAME }}" \
+            --add-data "src:src" \
+            --add-data "ips.json:." \
+            $ADD_ASSETS \
+            --distpath dist/linux \
+            --workpath build/pyinstaller \
+            --specpath build \
+            --clean \
+            --noconfirm \
+            src/__main__.py
+
+      - name: Crear paquete .deb
+        run: |
+          ARCH="amd64"
+          PKG_NAME="ipswitcher"
+          PKG_DIR="build/deb/${PKG_NAME}_${APP_VERSION}_${ARCH}"
+
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/bin"
+          mkdir -p "${PKG_DIR}/usr/share/applications"
+          mkdir -p "${PKG_DIR}/usr/share/${PKG_NAME}"
+          mkdir -p "${PKG_DIR}/usr/share/doc/${PKG_NAME}"
+
+          cp "dist/linux/${{ env.APP_NAME }}" "${PKG_DIR}/usr/bin/${PKG_NAME}"
+          chmod 755 "${PKG_DIR}/usr/bin/${PKG_NAME}"
+
+          cp ips.json "${PKG_DIR}/usr/share/${PKG_NAME}/ips.json"
+          chmod 644 "${PKG_DIR}/usr/share/${PKG_NAME}/ips.json"
+
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Name=IPSwitcher' \
+            'Comment=Herramienta para cambiar la IPv4 de adaptadores de red' \
+            'Exec=pkexec /usr/bin/ipswitcher' \
+            'Icon=network-wired' \
+            'Terminal=false' \
+            'Type=Application' \
+            'Categories=Network;Settings;' \
+            'Keywords=IP;Network;Switch;IPv4;' \
+            > "${PKG_DIR}/usr/share/applications/${PKG_NAME}.desktop"
+          chmod 644 "${PKG_DIR}/usr/share/applications/${PKG_NAME}.desktop"
+
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'set -e' \
+            'if command -v update-desktop-database > /dev/null 2>&1; then' \
+            '    update-desktop-database -q /usr/share/applications || true' \
+            'fi' \
+            > "${PKG_DIR}/DEBIAN/postinst"
+          chmod 755 "${PKG_DIR}/DEBIAN/postinst"
+
+          echo "Upstream-Name: IPSwitcher" > "${PKG_DIR}/usr/share/doc/${PKG_NAME}/copyright"
+          gzip --best -n -c /dev/null > "${PKG_DIR}/usr/share/doc/${PKG_NAME}/changelog.gz"
+
+          INSTALLED_SIZE=$(du -sk "${PKG_DIR}/usr" | cut -f1)
+          printf '%s\n' \
+            "Package: ${PKG_NAME}" \
+            "Version: ${APP_VERSION}" \
+            "Architecture: ${ARCH}" \
+            "Maintainer: IPSwitcher Project <ipswitcher@example.com>" \
+            "Installed-Size: ${INSTALLED_SIZE}" \
+            "Depends: libgtk-3-0" \
+            "Section: net" \
+            "Priority: optional" \
+            "Homepage: https://github.com/WhiteHornet13/IPSwitcher" \
+            "Description: Herramienta para cambiar la IPv4 de adaptadores de red" \
+            " IPSwitcher permite seleccionar un adaptador de red y aplicar" \
+            " configuraciones IP fijas almacenadas en un archivo JSON." \
+            > "${PKG_DIR}/DEBIAN/control"
+
+          dpkg-deb --build --root-owner-group \
+            "${PKG_DIR}" "dist/linux/${PKG_NAME}_${APP_VERSION}_${ARCH}.deb"
+        env:
+          APP_VERSION: ${{ env.APP_VERSION }}
+
+      - name: Subir artefactos Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            dist/linux/IPSwitcher
+            dist/linux/ipswitcher_*.deb
+          retention-days: 30
+
+  # ===========================================================================
+  # JOB 2 — Windows 10/11: .exe portable
+  # ===========================================================================
+  build-windows:
+    name: "Windows 10/11 — portable .exe"
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ env.PYTHON_VER }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VER }}
+
+      - name: Instalar dependencias Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+        shell: pwsh
+
+      # -----------------------------------------------------------------------
+      # En Windows el separador de --add-data es ";" en lugar de ":"
+      # -----------------------------------------------------------------------
+      - name: Compilar IPSwitcher.exe
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
+
+          $addAssets = ""
+          if (Test-Path "assets") {
+            $addAssets = "--add-data assets;assets"
+          }
+
+          $pyinstallerArgs = @(
+            "--onefile",
+            "--windowed",
+            "--name", "${{ env.APP_NAME }}",
+            "--add-data", "src;src",
+            "--add-data", "ips.json;.",
+            "--distpath", "dist\windows",
+            "--workpath", "build\pyinstaller_win",
+            "--specpath", "build",
+            "--clean",
+            "--noconfirm",
+            "src\__main__.py"
+          )
+
+          if ($addAssets) {
+            $pyinstallerArgs += $addAssets.Split(" ")
+          }
+
+          python -m PyInstaller @pyinstallerArgs
+        shell: pwsh
+
+      - name: Subir artefacto Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: dist\windows\IPSwitcher.exe
+          retention-days: 30
+
+  # ===========================================================================
+  # JOB 3 — Publicar Release (solo en push de tag v*)
+  # ===========================================================================
+  release:
+    name: "Publicar Release"
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Descargar artefactos Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-artifacts
+          path: _raw/linux
+
+      - name: Descargar artefactos Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artifacts
+          path: _raw/windows
+
+      - name: Organizar artefactos en carpetas
+        run: |
+          TAG="${{ github.ref_name }}"
+
+          mkdir -p release-assets/portables
+          mkdir -p release-assets/instaladores
+
+          # Linux portable
+          cp "_raw/linux/IPSwitcher" \
+             "release-assets/portables/IPSwitcher_${TAG}_linux_amd64"
+          chmod +x "release-assets/portables/IPSwitcher_${TAG}_linux_amd64"
+
+          # Windows portable
+          cp "_raw/windows/IPSwitcher.exe" \
+             "release-assets/portables/IPSwitcher_${TAG}_windows.exe"
+
+          # Linux .deb
+          DEB=$(ls _raw/linux/*.deb 2>/dev/null | head -1)
+          [[ -n "${DEB}" ]] && \
+            cp "${DEB}" "release-assets/instaladores/$(basename ${DEB})"
+
+          echo ""
+          echo "=== portables/ ==="
+          ls -lh release-assets/portables/
+          echo ""
+          echo "=== instaladores/ ==="
+          ls -lh release-assets/instaladores/
+
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "IPSwitcher ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## IPSwitcher ${{ github.ref_name }}
+
+            ---
+
+            ### Portables — ejecuta sin instalar
+
+            | Plataforma       | Archivo                                  |
+            |------------------|------------------------------------------|
+            | Linux            | `portables/IPSwitcher_*_linux_amd64`     |
+            | Windows 10/11    | `portables/IPSwitcher_*_windows.exe`     |
+
+            ### Instaladores — instalan en el sistema
+
+            | Plataforma       | Archivo                                  |
+            |------------------|------------------------------------------|
+            | Linux            | `instaladores/ipswitcher_*.deb`          |
+
+            ---
+
+            ### Instalacion rapida
+
+            **Linux (.deb):**
+            ```bash
+            sudo dpkg -i ipswitcher_*.deb
+            ```
+            **Linux (portable):**
+            ```bash
+            chmod +x IPSwitcher_*_linux_amd64
+            sudo ./IPSwitcher_*_linux_amd64
+            ```
+            **Windows 10/11:** clic derecho -> Ejecutar como administrador.
+
+            ---
+
+            Ver [CHANGELOG.md](https://github.com/WhiteHornet13/IPSwitcher/blob/main/CHANGELOG.md)
+            para los cambios de esta version.
+          files: |
+            release-assets/portables/*
+            release-assets/instaladores/*
+          token: ${{ secrets.GITHUB_TOKEN }}
