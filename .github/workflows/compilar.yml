@@ -197,21 +197,16 @@ jobs:
       # -----------------------------------------------------------------------
       # En Windows el separador de --add-data es ";" en lugar de ":"
       # -----------------------------------------------------------------------
+          
       - name: Compilar IPSwitcher.exe
         run: |
           New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
-
-          $addAssets = ""
-          if (Test-Path "assets") {
-            $addAssets = "--add-data assets;assets"
-          }
-
+      
           $pyinstallerArgs = @(
             "--onefile",
             "--windowed",
             "--name", "${{ env.APP_NAME }}",
             "--add-data", "$env:GITHUB_WORKSPACE\ips.json;.",
-            "--add-data", "$env:GITHUB_WORKSPACE\assets;assets",
             "--distpath", "dist\windows",
             "--workpath", "build\pyinstaller_win",
             "--specpath", "build",
@@ -219,11 +214,12 @@ jobs:
             "--noconfirm",
             "src\__main__.py"
           )
-
-          if ($addAssets) {
-            $pyinstallerArgs += $addAssets.Split(" ")
+      
+          if (Test-Path "$env:GITHUB_WORKSPACE\assets") {
+            $pyinstallerArgs += "--add-data"
+            $pyinstallerArgs += "$env:GITHUB_WORKSPACE\assets;assets"
           }
-
+      
           python -m PyInstaller @pyinstallerArgs
         shell: pwsh
 
