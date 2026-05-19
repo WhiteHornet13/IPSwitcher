@@ -97,7 +97,7 @@ jobs:
             --specpath build \
             --clean \
             --noconfirm \
-            src/__main__.py
+            main.py
 
       - name: Crear paquete .deb
         run: |
@@ -212,7 +212,7 @@ jobs:
             "--specpath", "build",
             "--clean",
             "--noconfirm",
-            "src\__main__.py"
+            "main.py"
           )
       
           if (Test-Path "$env:GITHUB_WORKSPACE\assets") {
