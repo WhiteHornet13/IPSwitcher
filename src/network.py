@@ -241,29 +241,24 @@ def get_current_ip(adapter: str) -> str:
                     break
 
         elif _OS == "Windows":
+            script = (
+                "Get-NetIPAddress"
+                " -InterfaceAlias '{name}'"
+                " -AddressFamily IPv4"
+                " -ErrorAction SilentlyContinue"
+                " | Select-Object -ExpandProperty IPAddress"
+            ).format(name=adapter.replace("'", "''"))
             result = subprocess.run(
-                ["ipconfig"],
-                capture_output=True, text=True, **_POPEN_FLAGS,
+                ["powershell", "-NoProfile", "-Command", script],
+                capture_output=True, text=True, timeout=5, **_POPEN_FLAGS,
             )
-            in_block = False
-            found_property = False   
-            for line in result.stdout.splitlines():
-                if adapter.lower() in line.lower():
-                    in_block = True
-                    found_property = False  # ← reset al entrar en bloque
-                if in_block:
-                    stripped = line.strip()
-                    if "ipv4" in stripped.lower():
-                        ip = stripped.split(":", 1)[1].strip()
-                        break
-                    if stripped:            # ← cualquier línea no vacía
-                        found_property = True
-                    if stripped == "" and found_property:
-                        break
-    except Exception:
-        pass
+            lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+            if lines:
+                ip = lines[0]
+            except Exception:
+                pass
 
-    return ip
+            return ip
 
 
 # ===========================================================================
