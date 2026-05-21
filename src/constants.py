@@ -20,7 +20,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 APP_NAME    = "IPSwitcher"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.2"
 APP_REPO    = "https://github.com/WhiteHornet13/IPSwitcher"
 
 # ---------------------------------------------------------------------------

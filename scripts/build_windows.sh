@@ -21,7 +21,7 @@
 set -euo pipefail
 
 APP_NAME="IPSwitcher"
-APP_VERSION="1.2.4"
+APP_VERSION="1.3.2"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="${REPO_ROOT}/src"

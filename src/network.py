@@ -247,17 +247,19 @@ def get_current_ip(adapter: str) -> str:
                 capture_output=True, text=True, **_POPEN_FLAGS,
             )
             in_block = False
+            found_property = False   
             for line in result.stdout.splitlines():
                 if adapter.lower() in line.lower():
                     in_block = True
+                    found_property = False  # ← reset al entrar en bloque
                 if in_block:
                     stripped = line.strip()
-                    # Los prefijos cambian segun el idioma del SO
-                    if stripped.lower().startswith(("ipv4", "direcci")):
+                    if "ipv4" in stripped.lower():
                         ip = stripped.split(":", 1)[1].strip()
                         break
-                    # Fin del bloque de este adaptador
-                    if stripped == "" and in_block:
+                    if stripped:            # ← cualquier línea no vacía
+                        found_property = True
+                    if stripped == "" and found_property:
                         break
     except Exception:
         pass
