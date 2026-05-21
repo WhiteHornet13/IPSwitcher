@@ -67,11 +67,10 @@ def get_network_adapters() -> list[str]:
                 ["netsh", "interface", "show", "interface"],
                 capture_output=True, text=True, timeout=10, **_POPEN_FLAGS,
             )
-            for line in result.stdout.splitlines():
+            lines = [l for l in result.stdout.splitlines() if l.strip()]
+            for line in lines[2:]:   # salta cabecera y separador de guiones
                 parts = line.split()
-                # Las lineas de datos tienen >= 4 columnas; la primera no es
-                # una cabecera ("Admin", "Estado"...) ni un separador ("---")
-                if len(parts) >= 4 and parts[0] not in ("Admin", "---"):
+                if len(parts) >= 4:
                     adapters.append(" ".join(parts[3:]))
         except (subprocess.SubprocessError, FileNotFoundError) as exc:
             logger.warning("No se pudo listar adaptadores (Windows): %s", exc)
