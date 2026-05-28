@@ -255,10 +255,10 @@ def get_current_ip(adapter: str) -> str:
             lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
             if lines:
                 ip = lines[0]
-            except Exception:
+    except Exception:
                 pass
 
-            return ip
+    return ip
 
 
 # ===========================================================================
