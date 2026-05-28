@@ -305,9 +305,17 @@ def set_dhcp(adapter: str) -> None:
     """
     Configura un adaptador para obtener IP por DHCP automaticamente.
 
-    Linux  : Usa ``dhclient`` o ``dhcpcd`` segun disponibilidad.
-             Libera la concesion actual antes de solicitar una nueva.
-    Windows: ``netsh interface ip set address source=dhcp``.
+    Equivale a marcar "Obtener direccion IP automaticamente" y desmarcar
+    "Usar la siguiente direccion IP" en el panel de red del sistema.
+
+    Linux  : Usa ``nmcli`` (NetworkManager, Ubuntu 20.04+) como primera
+             opcion, operando sobre el dispositivo para no depender del
+             nombre exacto del perfil de conexion. Si NetworkManager no
+             esta disponible usa ``dhclient`` y luego ``dhcpcd`` como
+             fallback para distribuciones sin NM.
+    Windows: ``netsh interface ip set address source=dhcp`` seguido de
+             ``netsh interface ip set dns source=dhcp`` para limpiar
+             tambien el DNS estatico si lo hubiera.
 
     Parameters
     ----------
@@ -321,19 +329,25 @@ def set_dhcp(adapter: str) -> None:
         esta soportado.
     """
     if _OS == "Linux":
-        subprocess.run(
-            ["ip", "addr", "flush", "dev", adapter],
-            capture_output=True,
-        )
-        if shutil.which("dhclient"):
+        if shutil.which("nmcli"):
+            _set_dhcp_nmcli(adapter)
+        elif shutil.which("dhclient"):
+            subprocess.run(
+                ["ip", "addr", "flush", "dev", adapter],
+                capture_output=True, **_POPEN_FLAGS,
+            )
             _run(["dhclient", "-r", adapter])
             _run(["dhclient", adapter])
         elif shutil.which("dhcpcd"):
+            subprocess.run(
+                ["ip", "addr", "flush", "dev", adapter],
+                capture_output=True, **_POPEN_FLAGS,
+            )
             _run(["dhcpcd", adapter])
         else:
             raise RuntimeError(
-                "No se encontro dhclient ni dhcpcd. "
-                "Instala isc-dhcp-client: sudo apt install isc-dhcp-client"
+                "No se encontro nmcli, dhclient ni dhcpcd. "
+                "Instala NetworkManager: sudo apt install network-manager"
             )
 
     elif _OS == "Windows":
@@ -341,9 +355,75 @@ def set_dhcp(adapter: str) -> None:
             "netsh", "interface", "ip", "set", "address",
             "name={}".format(adapter), "source=dhcp",
         ])
+        # Liberar tambien el DNS estatico si estuviera configurado
+        subprocess.run(
+            [
+                "netsh", "interface", "ip", "set", "dns",
+                "name={}".format(adapter), "source=dhcp",
+            ],
+            capture_output=True, **_POPEN_FLAGS,
+        )
+
     else:
         raise RuntimeError("Sistema operativo no soportado: {}".format(_OS))
 
+
+def _set_dhcp_nmcli(adapter: str) -> None:
+    """
+    Activa DHCP en un adaptador mediante NetworkManager (nmcli).
+
+    Estrategia
+    ----------
+    1. Obtiene el nombre del perfil de conexion activo del dispositivo.
+       Si el dispositivo no tiene perfil activo crea uno temporal.
+    2. Modifica ese perfil para que use DHCP (ipv4.method=auto) y borra
+       la IP estatica, gateway y DNS fijos.
+    3. Desactiva y reactiva la conexion para que NM aplique los cambios
+       y solicite una concesion DHCP al servidor.
+
+    Parameters
+    ----------
+    adapter : str
+        Nombre del dispositivo de red (ej: ``'eth0'``, ``'enp3s0'``).
+
+    Raises
+    ------
+    RuntimeError
+        Si ningun comando nmcli tiene exito.
+    """
+    # --- 1. Obtener el perfil activo del dispositivo ----------------------
+    result = subprocess.run(
+        ["nmcli", "-t", "-f", "GENERAL.CONNECTION", "dev", "show", adapter],
+        capture_output=True, text=True, **_POPEN_FLAGS,
+    )
+    connection_name = ""
+    for line in result.stdout.splitlines():
+        # Formato terse: "GENERAL.CONNECTION:nombre-del-perfil"
+        if line.startswith("GENERAL.CONNECTION:"):
+            connection_name = line.split(":", 1)[1].strip()
+            break
+
+    if not connection_name or connection_name == "--":
+        # Sin perfil activo: pedir a NM que conecte el dispositivo.
+        # NM creara un perfil automatico con DHCP.
+        _run(["nmcli", "dev", "connect", adapter])
+        return
+
+    # --- 2. Modificar el perfil para DHCP ---------------------------------
+    _run([
+        "nmcli", "con", "modify", connection_name,
+        "ipv4.method",    "auto",
+        "ipv4.addresses", "",
+        "ipv4.gateway",   "",
+        "ipv4.dns",       "",
+    ])
+
+    # --- 3. Ciclo down/up para aplicar cambios ----------------------------
+    subprocess.run(
+        ["nmcli", "con", "down", connection_name],
+        capture_output=True, **_POPEN_FLAGS,
+    )
+    _run(["nmcli", "con", "up", connection_name, "ifname", adapter])
 
 # ===========================================================================
 # Helpers privados

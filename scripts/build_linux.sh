@@ -25,7 +25,7 @@ set -euo pipefail
 # Variables de configuracion
 # ---------------------------------------------------------------------------
 APP_NAME="IPSwitcher"
-APP_VERSION="1.3.5"
+APP_VERSION="1.3.6"
 APP_LOWER="ipswitcher"
 ARCH="amd64"
 MAINTAINER="IPSwitcher Project <ipswitcher@example.com>"
