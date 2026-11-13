@@ -240,18 +240,24 @@ def get_current_ip(adapter: str) -> str:
                     ip = parts[3].split("/")[0]
                     break
 
-        elif _OS == "Windows":
+                elif _OS == "Windows":
+            # Las llaves del Where-Object van duplicadas porque el script
+            # pasa por str.format().
             script = (
                 "Get-NetIPAddress"
                 " -InterfaceAlias '{name}'"
                 " -AddressFamily IPv4"
                 " -ErrorAction SilentlyContinue"
+                " | Where-Object {{ $_.IPAddress -notlike '169.254.*' }}"
                 " | Select-Object -ExpandProperty IPAddress"
             ).format(name=adapter.replace("'", "''"))
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", script],
-                capture_output=True, text=True, timeout=5, **_POPEN_FLAGS,
+                capture_output=True, text=True, timeout=15, **_POPEN_FLAGS,
             )
+            logger.debug("Get-NetIPAddress %s -> rc=%s out=%r err=%r",
+                         adapter, result.returncode,
+                         result.stdout, result.stderr)
             lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
             if lines:
                 ip = lines[0]
